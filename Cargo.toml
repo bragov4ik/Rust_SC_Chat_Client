@@ -9,3 +9,4 @@ edition = "2018"
 
 [dependencies]
 native-tls = "0.2"
+crossterm = "0.19.0"
