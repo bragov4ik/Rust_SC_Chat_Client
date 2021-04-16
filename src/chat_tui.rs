@@ -58,6 +58,7 @@ pub struct Message {
     contents: String,
 }
 
+#[allow(dead_code)]
 impl Message {
     pub fn from_strings(time: String, author: String, contents: String) -> Message{
         Message {
