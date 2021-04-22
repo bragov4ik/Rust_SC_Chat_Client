@@ -2,21 +2,28 @@ use native_tls::{TlsConnector, TlsStream, Certificate};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::net::TcpStream;
-mod chat_tui;
+use std::thread;
+use std::sync::{Mutex, Arc};
 
+mod chat_tui;
+type Shared<T> = Arc<Mutex<T>>;
+
+/// Writes all the buffer provided appending '\r\n\r\n' at the end
+/// to indicate the end of message
 fn send_to_stream(stream: &mut TlsStream<TcpStream>, buf: &[u8]) -> Result<(), std::io::Error> {
     let mut message: String = String::from_utf8_lossy(buf).to_string();
     message += "\r\n\r\n";
     stream.write_all(message.as_bytes())
 }
 
-/// Reads from the stream until it receives '\r\n\r\n' sequence
-/// Does not include the sequence in the result
-fn read_until_2rn(stream: &mut TlsStream<TcpStream>, buf: &mut Vec<u8>) {
+/// Continuously reads from the stream (if any pending bytes present) or checks every `millis`
+/// milliseconds until it receives '\r\n\r\n' sequence. 
+/// Does not include the sequence in the result.
+fn read_until_2rn(stream: & Shared<TlsStream<TcpStream>>, buf: &mut Vec<u8>, millis: u64) {
     let mut inner_buf = [0];
     let mut was_r = false;
     let mut rn_count = 0;
-    while rn_count < 2 && match stream.read(&mut inner_buf) {
+    while rn_count < 2 && match stream.lock().unwrap().read(&mut inner_buf) {
         Ok(size) => {
             // If no bytes were read - just skip (maybe packet loss
             // or something)
@@ -49,6 +56,10 @@ fn read_until_2rn(stream: &mut TlsStream<TcpStream>, buf: &mut Vec<u8>) {
             }
             true
         }
+        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+            thread::sleep(std::time::Duration::from_millis(millis));
+            true
+        }
         Err(e) => {
             println!("Error while receiving message: {}", e);
             false
@@ -70,7 +81,8 @@ fn main() {
 
     let connector = connector.build().unwrap();
     let stream = TcpStream::connect("localhost:8080").unwrap();
-    let mut stream = connector.connect("localhost", stream).unwrap();
+    let stream = connector.connect("localhost", stream).unwrap();
+    let stream = Arc::new(Mutex::new(stream));
 
     // Print empty message
     chat_tui::open_window();
@@ -87,11 +99,11 @@ fn main() {
         let mut login_buf = String::new();
         chat_tui::read_input_line(&mut login_buf).unwrap();
         login_buf = login_buf.trim().to_string();
-        send_to_stream(&mut stream, login_buf.as_bytes()).unwrap();
+        send_to_stream(&mut stream.lock().unwrap(), login_buf.as_bytes()).unwrap();
 
         // Receive response from the server
         let mut res = vec![];
-        read_until_2rn(&mut stream, &mut res);
+        read_until_2rn(&stream, &mut res, 100);
         let ind_cred_res = String::from_utf8_lossy(&res);
 
         // If the response says our credentials are correct, we stop iterating
@@ -103,9 +115,42 @@ fn main() {
                 ind_cred_res.trim()));
         }
     }
-
+    stream.lock().unwrap().get_ref().set_nonblocking(true).unwrap();
+    let send_thread;
+    let recv_thread;
+    {
+        let stream = stream.clone();
+        send_thread = thread::spawn(move || {
+            write_to_server(stream);
+        });
+    }
+    {
+        let stream = stream.clone();
+        recv_thread = thread::spawn(move || {
+            read_from_server(stream);
+        });
+    }
+    send_thread.join().unwrap();
+    
     chat_tui::close_window();
 
+
+
     // Close connection
-    stream.shutdown().unwrap();
+    stream.lock().unwrap().shutdown().unwrap();
+}
+
+fn write_to_server(stream: Shared<TlsStream<TcpStream>>){
+    loop{
+        let mut msg_buf = String::new();
+        chat_tui::read_input_line(&mut msg_buf).unwrap();
+        send_to_stream(&mut stream.lock().unwrap(), msg_buf.as_bytes()).unwrap();
+    }
+}
+fn read_from_server(stream: Shared<TlsStream<TcpStream>>) {
+    loop {
+        let mut message = vec![];
+        read_until_2rn(&stream, &mut message, 100);
+        chat_tui::draw_window(vec!(String::from_utf8_lossy(&message)));
+    }
 }
