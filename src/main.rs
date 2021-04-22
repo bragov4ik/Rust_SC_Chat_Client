@@ -110,18 +110,22 @@ fn main() {
                 ind_cred_res.trim()));
         }
     }
+    let send_thread;
+    let recv_thread;
     {
         let stream = stream.clone();
-        thread::spawn(move || {
+        send_thread = thread::spawn(move || {
             write_to_server(stream);
         });
     }
     {
         let stream = stream.clone();
-        thread::spawn(move || {
+        recv_thread = thread::spawn(move || {
             read_from_server(stream);
         });
     }
+    send_thread.join().unwrap();
+    
     chat_tui::close_window();
 
 
