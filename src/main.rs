@@ -8,19 +8,21 @@ use std::sync::{Mutex, Arc};
 mod chat_tui;
 type Shared<T> = Arc<Mutex<T>>;
 
+/// Writes all the buffer provided appending '\r\n\r\n' at the end
+/// to indicate the end of message
 fn send_to_stream(stream: &mut TlsStream<TcpStream>, buf: &[u8]) -> Result<(), std::io::Error> {
     let mut message: String = String::from_utf8_lossy(buf).to_string();
     message += "\r\n\r\n";
     stream.write_all(message.as_bytes())
 }
 
-/// Reads from the stream until it receives '\r\n\r\n' sequence
+/// Continuously reads from the stream until it receives '\r\n\r\n' sequence
 /// Does not include the sequence in the result
-fn read_until_2rn(stream: &mut TlsStream<TcpStream>, buf: &mut Vec<u8>) {
+fn read_until_2rn(stream: & Shared<TlsStream<TcpStream>>, buf: &mut Vec<u8>) {
     let mut inner_buf = [0];
     let mut was_r = false;
     let mut rn_count = 0;
-    while rn_count < 2 && match stream.read(&mut inner_buf) {
+    while rn_count < 2 && match stream.lock().unwrap().read(&mut inner_buf) {
         Ok(size) => {
             // If no bytes were read - just skip (maybe packet loss
             // or something)
@@ -75,6 +77,7 @@ fn main() {
     let connector = connector.build().unwrap();
     let stream = TcpStream::connect("localhost:8080").unwrap();
     let mut stream = connector.connect("localhost", stream).unwrap();
+    let stream = Arc::new(Mutex::new(stream));
 
     // Print empty message
     chat_tui::open_window();
@@ -91,11 +94,11 @@ fn main() {
         let mut login_buf = String::new();
         chat_tui::read_input_line(&mut login_buf).unwrap();
         login_buf = login_buf.trim().to_string();
-        send_to_stream(&mut stream, login_buf.as_bytes()).unwrap();
+        send_to_stream(&mut stream.lock().unwrap(), login_buf.as_bytes()).unwrap();
 
         // Receive response from the server
         let mut res = vec![];
-        read_until_2rn(&mut stream, &mut res);
+        read_until_2rn(&stream, &mut res);
         let ind_cred_res = String::from_utf8_lossy(&res);
 
         // If the response says our credentials are correct, we stop iterating
@@ -107,19 +110,18 @@ fn main() {
                 ind_cred_res.trim()));
         }
     }
-    let stream = Arc::new(Mutex::new(stream));
-{
-    let stream = stream.clone();
-    thread::spawn(move || {
-        write_to_server(stream);
-    });
-}
-{
-    let stream = stream.clone();
-    thread::spawn(move || {
-        read_from_server(stream);
-    });
-}
+    {
+        let stream = stream.clone();
+        thread::spawn(move || {
+            write_to_server(stream);
+        });
+    }
+    {
+        let stream = stream.clone();
+        thread::spawn(move || {
+            read_from_server(stream);
+        });
+    }
     chat_tui::close_window();
 
 
@@ -138,7 +140,7 @@ fn write_to_server(stream: Shared<TlsStream<TcpStream>>){
 fn read_from_server(stream: Shared<TlsStream<TcpStream>>) {
     loop {
         let mut message = vec![];
-        read_until_2rn(&mut stream.lock().unwrap(), &mut message);
+        read_until_2rn(&stream, &mut message);
 
     }
 }
