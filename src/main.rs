@@ -16,50 +16,60 @@ fn send_to_stream(stream: &mut TlsStream<TcpStream>, buf: &[u8]) -> Result<(), s
     stream.write_all(message.as_bytes())
 }
 
-/// Continuously reads from the stream until it receives '\r\n\r\n' sequence
-/// Does not include the sequence in the result
-fn read_until_2rn(stream: & Shared<TlsStream<TcpStream>>, buf: &mut Vec<u8>) {
+/// Continuously reads from the stream (if any pending bytes present) or checks every `millis`
+/// milliseconds until it receives '\r\n\r\n' sequence. 
+/// Does not include the sequence in the result.
+fn read_until_2rn(stream: & Shared<TlsStream<TcpStream>>, buf: &mut Vec<u8>, millis: u64) {
     let mut inner_buf = [0];
     let mut was_r = false;
     let mut rn_count = 0;
-    while rn_count < 2 && match stream.lock().unwrap().read(&mut inner_buf) {
-        Ok(size) => {
-            // If no bytes were read - just skip (maybe packet loss
-            // or something)
-            if size == 1 {
-                // There are 5 'states' in the loop:
-                // 0. was_r = false, rn_count = 0 - we haven't detected anything
-                // 1. was_r = true, rn_count = 0 - we've detected '\r'
-                // 2. was_r = false, rn_count = 1 - '\r\n'
-                // 3. was_r = true, rn_count = 1 - '\r\n\r'
-                // 4. was_r = false, rn_count = 2 - '\r\n\r\n', exit!
-                if inner_buf[0] == b'\r' {
-                    was_r = true
-                } else if inner_buf[0] == b'\n' && was_r {
-                    rn_count += 1;
-                    was_r = false;
-                } else {
-                    // This wasn't an end of the message, add skipped
-                    // bytes and continue fresh
-                    if rn_count == 1 {
-                        buf.push(b'\r');
-                        buf.push(b'\n');
+    let mut i = 0;
+    while rn_count < 2 {
+        i += 1;
+        if stream.lock().unwrap().buffered_read_size().unwrap() > 0 {
+            match stream.lock().unwrap().read(&mut inner_buf) {
+                Ok(size) => {
+                    // If no bytes were read - just skip (maybe packet loss
+                    // or something)
+                    if size == 1 {
+                        // There are 5 'states' in the loop:
+                        // 0. was_r = false, rn_count = 0 - we haven't detected anything
+                        // 1. was_r = true, rn_count = 0 - we've detected '\r'
+                        // 2. was_r = false, rn_count = 1 - '\r\n'
+                        // 3. was_r = true, rn_count = 1 - '\r\n\r'
+                        // 4. was_r = false, rn_count = 2 - '\r\n\r\n', exit!
+                        if inner_buf[0] == b'\r' {
+                            was_r = true
+                        } else if inner_buf[0] == b'\n' && was_r {
+                            rn_count += 1;
+                            was_r = false;
+                        } else {
+                            // This wasn't an end of the message, add skipped
+                            // bytes and continue fresh
+                            if rn_count == 1 {
+                                buf.push(b'\r');
+                                buf.push(b'\n');
+                            }
+                            if was_r {
+                                buf.push(b'\r');
+                            }
+                            buf.push(inner_buf[0]);
+                            rn_count = 0;
+                            was_r = false;
+                        }
                     }
-                    if was_r {
-                        buf.push(b'\r');
-                    }
-                    buf.push(inner_buf[0]);
-                    rn_count = 0;
-                    was_r = false;
+                }
+                Err(e) => {
+                    println!("Error while receiving message: {}", e);
+                    break;
                 }
             }
-            true
         }
-        Err(e) => {
-            println!("Error while receiving message: {}", e);
-            false
+        else {
+            chat_tui::draw_window(vec!(format!("Can't read yet, waiting for 0.5s, {}", i)));
+            thread::sleep(std::time::Duration::from_millis(millis));
         }
-    } {}
+    }
 }
 
 
@@ -98,7 +108,7 @@ fn main() {
 
         // Receive response from the server
         let mut res = vec![];
-        read_until_2rn(&stream, &mut res);
+        read_until_2rn(&stream, &mut res, 500);
         let ind_cred_res = String::from_utf8_lossy(&res);
 
         // If the response says our credentials are correct, we stop iterating
@@ -144,7 +154,7 @@ fn write_to_server(stream: Shared<TlsStream<TcpStream>>){
 fn read_from_server(stream: Shared<TlsStream<TcpStream>>) {
     loop {
         let mut message = vec![];
-        read_until_2rn(&stream, &mut message);
+        read_until_2rn(&stream, &mut message, 500);
 
     }
 }
