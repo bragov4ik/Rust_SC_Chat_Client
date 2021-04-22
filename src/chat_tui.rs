@@ -275,7 +275,7 @@ fn move_cursor_to_input_field() {
 }
 
 pub fn clear_input_field() {
-    execute!(
+    execute!(ф
         stdout(),
         SavePosition,
     ).unwrap();

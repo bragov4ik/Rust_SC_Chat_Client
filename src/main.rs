@@ -2,7 +2,11 @@ use native_tls::{TlsConnector, TlsStream, Certificate};
 use std::fs::File;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::thread;
+use std::sync::{Mutex, Arc};
+
 mod chat_tui;
+type Shared<T> = Arc<Mutex<T>>;
 
 fn send_to_stream(stream: &mut TlsStream<TcpStream>, buf: &[u8]) -> Result<(), std::io::Error> {
     let mut message: String = String::from_utf8_lossy(buf).to_string();
@@ -103,9 +107,38 @@ fn main() {
                 ind_cred_res.trim()));
         }
     }
-
+    let stream = Arc::new(Mutex::new(stream));
+{
+    let stream = stream.clone();
+    thread::spawn(move || {
+        write_to_server(stream);
+    });
+}
+{
+    let stream = stream.clone();
+    thread::spawn(move || {
+        read_from_server(stream);
+    });
+}
     chat_tui::close_window();
 
+
+
     // Close connection
-    stream.shutdown().unwrap();
+    stream.lock().unwrap().shutdown().unwrap();
+}
+
+fn write_to_server(stream: Shared<TlsStream<TcpStream>>){
+    loop{
+        let mut msg_buf = String::new();
+        chat_tui::read_input_line(&mut msg_buf).unwrap();
+        send_to_stream(&mut stream.lock().unwrap(), msg_buf.as_bytes()).unwrap();
+    }
+}
+fn read_from_server(stream: Shared<TlsStream<TcpStream>>) {
+    loop {
+        let mut message = vec![];
+        read_until_2rn(&mut stream.lock().unwrap(), &mut message);
+
+    }
 }
