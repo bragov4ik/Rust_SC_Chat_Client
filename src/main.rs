@@ -4,6 +4,7 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::thread;
 use std::sync::{Mutex, Arc};
+use std::str::FromStr;
 
 mod chat_tui;
 type Shared<T> = Arc<Mutex<T>>;
@@ -86,13 +87,13 @@ fn main() {
 
     // Print empty message
     chat_tui::open_window();
-    chat_tui::draw_window(vec!(""));
+    chat_tui::draw_window(&vec!(""));
 
     // Value to stop iterating through a loop then we receive correct credentials
     let mut authentication_incorrect: bool = true;
     // Do not stop, until the credentials are correct
     while authentication_incorrect {
-        chat_tui::draw_window(vec!(
+        chat_tui::draw_window(&vec!(
             "Log in format: login/password",
             "Registration format: login/password/username"));
         // Providing Credentials for Server
@@ -111,7 +112,7 @@ fn main() {
             authentication_incorrect = false
         } else {
             // If the response says our credentials are incorrect, we continue iterating
-            chat_tui::draw_window(vec!(
+            chat_tui::draw_window(&vec!(
                 ind_cred_res.trim()));
         }
     }
@@ -144,13 +145,18 @@ fn write_to_server(stream: Shared<TlsStream<TcpStream>>){
     loop{
         let mut msg_buf = String::new();
         chat_tui::read_input_line(&mut msg_buf).unwrap();
+        msg_buf = String::from_str(msg_buf.trim_matches('\n')).unwrap();
         send_to_stream(&mut stream.lock().unwrap(), msg_buf.as_bytes()).unwrap();
     }
 }
 fn read_from_server(stream: Shared<TlsStream<TcpStream>>) {
+    let mut msg_vector: std::vec::Vec<String> = vec!();
     loop {
-        let mut message = vec![];
+        let mut message = vec!();
         read_until_2rn(&stream, &mut message, 100);
-        chat_tui::draw_window(vec!(String::from_utf8_lossy(&message)));
+        msg_vector.insert(0, 
+            String::from_utf8_lossy(&message).to_string()
+        );
+        chat_tui::draw_window(&msg_vector);
     }
 }
