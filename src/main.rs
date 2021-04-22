@@ -23,53 +23,48 @@ fn read_until_2rn(stream: & Shared<TlsStream<TcpStream>>, buf: &mut Vec<u8>, mil
     let mut inner_buf = [0];
     let mut was_r = false;
     let mut rn_count = 0;
-    let mut i = 0;
-    while rn_count < 2 {
-        i += 1;
-        if stream.lock().unwrap().buffered_read_size().unwrap() > 0 {
-            match stream.lock().unwrap().read(&mut inner_buf) {
-                Ok(size) => {
-                    // If no bytes were read - just skip (maybe packet loss
-                    // or something)
-                    if size == 1 {
-                        // There are 5 'states' in the loop:
-                        // 0. was_r = false, rn_count = 0 - we haven't detected anything
-                        // 1. was_r = true, rn_count = 0 - we've detected '\r'
-                        // 2. was_r = false, rn_count = 1 - '\r\n'
-                        // 3. was_r = true, rn_count = 1 - '\r\n\r'
-                        // 4. was_r = false, rn_count = 2 - '\r\n\r\n', exit!
-                        if inner_buf[0] == b'\r' {
-                            was_r = true
-                        } else if inner_buf[0] == b'\n' && was_r {
-                            rn_count += 1;
-                            was_r = false;
-                        } else {
-                            // This wasn't an end of the message, add skipped
-                            // bytes and continue fresh
-                            if rn_count == 1 {
-                                buf.push(b'\r');
-                                buf.push(b'\n');
-                            }
-                            if was_r {
-                                buf.push(b'\r');
-                            }
-                            buf.push(inner_buf[0]);
-                            rn_count = 0;
-                            was_r = false;
-                        }
+    while rn_count < 2 && match stream.lock().unwrap().read(&mut inner_buf) {
+        Ok(size) => {
+            // If no bytes were read - just skip (maybe packet loss
+            // or something)
+            if size == 1 {
+                // There are 5 'states' in the loop:
+                // 0. was_r = false, rn_count = 0 - we haven't detected anything
+                // 1. was_r = true, rn_count = 0 - we've detected '\r'
+                // 2. was_r = false, rn_count = 1 - '\r\n'
+                // 3. was_r = true, rn_count = 1 - '\r\n\r'
+                // 4. was_r = false, rn_count = 2 - '\r\n\r\n', exit!
+                if inner_buf[0] == b'\r' {
+                    was_r = true
+                } else if inner_buf[0] == b'\n' && was_r {
+                    rn_count += 1;
+                    was_r = false;
+                } else {
+                    // This wasn't an end of the message, add skipped
+                    // bytes and continue fresh
+                    if rn_count == 1 {
+                        buf.push(b'\r');
+                        buf.push(b'\n');
                     }
-                }
-                Err(e) => {
-                    println!("Error while receiving message: {}", e);
-                    break;
+                    if was_r {
+                        buf.push(b'\r');
+                    }
+                    buf.push(inner_buf[0]);
+                    rn_count = 0;
+                    was_r = false;
                 }
             }
+            true
         }
-        else {
-            chat_tui::draw_window(vec!(format!("Can't read yet, waiting for 0.5s, {}", i)));
+        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
             thread::sleep(std::time::Duration::from_millis(millis));
+            true
         }
-    }
+        Err(e) => {
+            println!("Error while receiving message: {}", e);
+            false
+        }
+    } {}
 }
 
 
@@ -86,7 +81,7 @@ fn main() {
 
     let connector = connector.build().unwrap();
     let stream = TcpStream::connect("localhost:8080").unwrap();
-    let mut stream = connector.connect("localhost", stream).unwrap();
+    let stream = connector.connect("localhost", stream).unwrap();
     let stream = Arc::new(Mutex::new(stream));
 
     // Print empty message
@@ -108,7 +103,7 @@ fn main() {
 
         // Receive response from the server
         let mut res = vec![];
-        read_until_2rn(&stream, &mut res, 500);
+        read_until_2rn(&stream, &mut res, 100);
         let ind_cred_res = String::from_utf8_lossy(&res);
 
         // If the response says our credentials are correct, we stop iterating
@@ -120,6 +115,7 @@ fn main() {
                 ind_cred_res.trim()));
         }
     }
+    stream.lock().unwrap().get_ref().set_nonblocking(true).unwrap();
     let send_thread;
     let recv_thread;
     {
@@ -154,7 +150,7 @@ fn write_to_server(stream: Shared<TlsStream<TcpStream>>){
 fn read_from_server(stream: Shared<TlsStream<TcpStream>>) {
     loop {
         let mut message = vec![];
-        read_until_2rn(&stream, &mut message, 500);
-
+        read_until_2rn(&stream, &mut message, 100);
+        chat_tui::draw_window(vec!(String::from_utf8_lossy(&message)));
     }
 }
