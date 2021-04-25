@@ -256,7 +256,6 @@ pub fn draw_window<T: fmt::Display>(messages: &Vec<T>) {
     add_messages(messages, rows-3, columns);
     add_up_home();
 
-    add_delimiter_line(columns);
     add_up_home();
 
     queue!(

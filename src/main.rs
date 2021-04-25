@@ -132,7 +132,7 @@ fn main() {
         });
     }
     send_thread.join().unwrap();
-    
+
     chat_tui::close_window();
 
 
@@ -145,7 +145,10 @@ fn write_to_server(stream: Shared<TlsStream<TcpStream>>){
     loop{
         let mut msg_buf = String::new();
         chat_tui::read_input_line(&mut msg_buf).unwrap();
-        msg_buf = String::from_str(msg_buf.trim_matches('\n')).unwrap();
+        msg_buf = String::from_str(msg_buf.trim()).unwrap();
+        if msg_buf == "/exit" {
+            break
+        }
         send_to_stream(&mut stream.lock().unwrap(), msg_buf.as_bytes()).unwrap();
     }
 }
@@ -154,6 +157,9 @@ fn read_from_server(stream: Shared<TlsStream<TcpStream>>) {
     loop {
         let mut message = vec!();
         read_until_2rn(&stream, &mut message, 100);
+        if String::from_utf8_lossy(&message).to_string() == "/exit" {
+            break
+        }
         msg_vector.insert(0, 
             String::from_utf8_lossy(&message).to_string()
         );
