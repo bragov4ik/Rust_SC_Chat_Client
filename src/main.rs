@@ -20,7 +20,7 @@ fn send_to_stream(stream: &mut TlsStream<TcpStream>, buf: &[u8]) -> Result<(), s
 /// Continuously reads from the stream (if any pending bytes present) or checks every `millis`
 /// milliseconds until it receives '\r\n\r\n' sequence. 
 /// Does not include the sequence in the result.
-fn read_until_2rn(stream: & Shared<TlsStream<TcpStream>>, buf: &mut Vec<u8>, millis: u64) {
+fn read_until_2rn(stream: & Shared<TlsStream<TcpStream>>, buf: &mut Vec<u8>, millis: u64) -> Result<(), std::io::Error> {
     let mut inner_buf = [0];
     let mut was_r = false;
     let mut rn_count = 0;
@@ -61,11 +61,16 @@ fn read_until_2rn(stream: & Shared<TlsStream<TcpStream>>, buf: &mut Vec<u8>, mil
             thread::sleep(std::time::Duration::from_millis(millis));
             true
         }
+        Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {
+            chat_tui::draw_window(&vec!(format!("Failed to read from stream, {:?}", e.kind())));
+            return Err(e);
+        }
         Err(e) => {
-            chat_tui::draw_window(&vec!(format!("Error while receiving message: {}, kind: {:?}", e, e.kind())));
+            chat_tui::draw_window(&vec!(format!("Error while receiving message: '{}', kind = {:?}", e, e.kind())));
             false
         }
     } {}
+    Ok(())
 }
 
 
@@ -100,11 +105,29 @@ fn main() {
         let mut login_buf = String::new();
         chat_tui::read_input_line(&mut login_buf).unwrap();
         login_buf = login_buf.trim().to_string();
-        send_to_stream(&mut stream.lock().unwrap(), login_buf.as_bytes()).unwrap();
+        match send_to_stream(&mut stream.lock().unwrap(), login_buf.as_bytes()) {
+            Ok(()) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {
+                chat_tui::draw_window(&vec!(format!("Couldn't send credentials due to error:{}; kind: {:?}", e, e.kind())));
+                break;
+            }
+            Err(..) => {
+                break;
+            }
+        }
 
         // Receive response from the server
         let mut res = vec![];
-        read_until_2rn(&stream, &mut res, 100);
+        match read_until_2rn(&stream, &mut res, 100) {
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {
+                break;
+            }
+            Err(e) => { 
+                chat_tui::draw_window(&vec!(format!("Can't read more messages from {}: {}; kind: {:?}", stream.lock().unwrap().get_ref().peer_addr().unwrap(), e, e.kind())));
+                break;
+            }
+            _ => {}
+        }
         let ind_cred_res = String::from_utf8_lossy(&res);
 
         // If the response says our credentials are correct, we stop iterating
@@ -135,7 +158,16 @@ fn main() {
     send_thread.join().unwrap();
 
     // Close connection
-    stream.lock().unwrap().shutdown().unwrap();
+    match stream.lock().unwrap().shutdown(){
+        Ok(..)=>{
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {
+            chat_tui::draw_window(&vec!("Couldn't shutdown connection because it was already closed"));
+        }
+        Err(e)=>{
+            chat_tui::draw_window(&vec!(format!("Error shutting down a connection. {:?}", e.kind())));
+        }
+    }
 
     chat_tui::close_window();
 }
@@ -148,14 +180,37 @@ fn write_to_server(stream: Shared<TlsStream<TcpStream>>){
         if msg_buf == "/exit" {
             break
         }
-        send_to_stream(&mut stream.lock().unwrap(), msg_buf.as_bytes()).unwrap();
+        match send_to_stream(&mut stream.lock().unwrap(), msg_buf.as_bytes()) {
+            Ok(()) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {
+                chat_tui::draw_window(&vec!(format!("Couldn't send message due to error:{}; kind: {:?}", e, e.kind())));
+                break;
+            }
+            Err(..) => {
+                break;
+            }
+        }
     }
 }
 fn read_from_server(stream: Shared<TlsStream<TcpStream>>) {
     let mut msg_vector: std::vec::Vec<String> = vec!();
     loop {
         let mut message = vec!();
-        read_until_2rn(&stream, &mut message, 100);
+        match read_until_2rn(&stream, &mut message, 100) {
+            Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => {
+                break;
+            }
+            Err(e) => { 
+                chat_tui::draw_window(&vec!(format!(
+                    "Can't read more messages from {}: {}; kind: {:?}", 
+                    stream.lock().unwrap().get_ref().peer_addr().unwrap(), 
+                    e, 
+                    e.kind()
+                )));
+                break;
+            }
+            _ => {}
+        }
         if String::from_utf8_lossy(&message).to_string() == "/exit" {
             break;
         }
