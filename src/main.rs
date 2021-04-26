@@ -62,7 +62,7 @@ fn read_until_2rn(stream: & Shared<TlsStream<TcpStream>>, buf: &mut Vec<u8>, mil
             true
         }
         Err(e) => {
-            println!("Error while receiving message: {}", e);
+            chat_tui::draw_window(&vec!(format!("Error while receiving message: {}, kind: {:?}", e, e.kind())));
             false
         }
     } {}
@@ -109,7 +109,8 @@ fn main() {
 
         // If the response says our credentials are correct, we stop iterating
         if ind_cred_res == "correct" {
-            authentication_incorrect = false
+            authentication_incorrect = false;
+            chat_tui::draw_window(&vec!("Successfully logged in"));
         } else {
             // If the response says our credentials are incorrect, we continue iterating
             chat_tui::draw_window(&vec!(
@@ -133,12 +134,10 @@ fn main() {
     }
     send_thread.join().unwrap();
 
-    chat_tui::close_window();
-
-
-
     // Close connection
     stream.lock().unwrap().shutdown().unwrap();
+
+    chat_tui::close_window();
 }
 
 fn write_to_server(stream: Shared<TlsStream<TcpStream>>){
@@ -158,7 +157,10 @@ fn read_from_server(stream: Shared<TlsStream<TcpStream>>) {
         let mut message = vec!();
         read_until_2rn(&stream, &mut message, 100);
         if String::from_utf8_lossy(&message).to_string() == "/exit" {
-            break
+            break;
+        }
+        else if String::from_utf8_lossy(&message).to_string() == "" {
+            continue;
         }
         msg_vector.insert(0, 
             String::from_utf8_lossy(&message).to_string()
