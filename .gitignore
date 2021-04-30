@@ -2,8 +2,9 @@
 # will have compiled files and executables
 /target/
 
-# IntelliJ files
+# IDE files
 .idea/
+.vscode/
 
 # Certificates/private keys/other related stuff
 *.pfx
